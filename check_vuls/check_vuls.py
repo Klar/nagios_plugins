@@ -28,7 +28,6 @@ class CVE():
         self.filename = filename
         self.cvekeys = ["ServerName", "ScannedCves", "KnownCves", "UnknownCves", "IgnoredCves"]
 
-
         with open(self.filepath + filename) as json_data:
             self.json_data = json.load(json_data)
 
@@ -84,21 +83,14 @@ try:
         for servername, packages in server_dic.items():
             # remove servers without cve packages
             if len(packages) != 0:
-
                 state += 1
-
                 print "%s:" % servername
-
-
                 for CveId, val in packages.items():
                     if not "Score" in val:
                         val["Score"] = " - "
-
                     print " * %s - Score: %s" % (CveId, val["Score"])
-
                     for package, keys in val["Packages"].items():
                         print "\t* %s \n\t\t* Current Version: \t%s\n\t\t* New Version:\t\t%s" % (package, keys["Version"], keys["NewVersion"])
-
                 print "\n"
 
 except:
