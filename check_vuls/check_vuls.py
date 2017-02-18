@@ -90,7 +90,9 @@ try:
                         val["Score"] = " - "
                     print " * %s - Score: %s" % (CveId, val["Score"])
                     for package, keys in val["Packages"].items():
-                        print "\t* %s \n\t\t* Current Version: \t%s\n\t\t* New Version:\t\t%s" % (package, keys["Version"], keys["NewVersion"])
+                        #print "\t* %s \n\t\t* Current Version: \t%s\n\t\t* New Version:\t\t%s" % (package, keys["Version"], keys["NewVersion"])
+                        print "\t* %s " % (package)
+
                 print "\n"
 
 except:
