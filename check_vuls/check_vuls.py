@@ -4,10 +4,9 @@ import json
 import sys
 import os
 
-
 argvs_c=0
 warning=1
-critical=3
+critical=5
 state=0
 unknown=False
 output=""
@@ -20,13 +19,14 @@ for argvs in sys.argv:
     elif argvs == "-c":
         critical = sys.argv[argvs_c].split(",")[0]
 
-filepath = "/path/to/my/vuls/results/"
+filepath = "/var/vuls/results/current/"
 
 class CVE():
     def __init__(self, filepath, filename):
         self.filepath = filepath
         self.filename = filename
         self.cvekeys = ["ServerName", "ScannedCves", "KnownCves", "UnknownCves", "IgnoredCves"]
+
 
         with open(self.filepath + filename) as json_data:
             self.json_data = json.load(json_data)
@@ -37,6 +37,7 @@ class CVE():
             if key == self.cvekeys[0] and self.json_data[self.cvekeys[1]] is not None:
                 result_dict[val] = {}
                 for pack in self.json_data[self.cvekeys[1]]:
+                    # print pack
                     result_dict[self.json_data["ServerName"]][pack["CveID"]] = {}
                     packageinfo = {}
 
@@ -83,15 +84,22 @@ try:
         for servername, packages in server_dic.items():
             # remove servers without cve packages
             if len(packages) != 0:
+
                 state += 1
+
                 print "%s:" % servername
+
+
                 for CveId, val in packages.items():
                     if not "Score" in val:
                         val["Score"] = " - "
+
                     print " * %s - Score: %s" % (CveId, val["Score"])
+
+                    # print val["Packages"]
                     for package, keys in val["Packages"].items():
-                        #print "\t* %s \n\t\t* Current Version: \t%s\n\t\t* New Version:\t\t%s" % (package, keys["Version"], keys["NewVersion"])
-                        print "\t* %s " % (package)
+                        print "\t* %s \n\t\t* Current Version: \t%s\n\t\t* New Version:\t\t%s" % (package, keys["Version"], keys["NewVersion"])
+                        #print "\t* %s " % (package)
 
                 print "\n"
 
@@ -101,11 +109,14 @@ except:
     perfdata = ""
 
 if state >= int(critical):
+    #print "CRITICAL"
     sys.exit(2)
 elif state >= int(warning):
+    #print "WARNING"
     sys.exit(1)
 elif unknown:
-    print "UKNOWN - please check the script"
+    print "UKNOWN - please check script"
     sys.exit(3)
 else:
+    #print "OK - %s" % output
     sys.exit(0)
