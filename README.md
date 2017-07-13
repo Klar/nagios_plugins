@@ -8,18 +8,18 @@ Nagios Script for https://github.com/future-architect/vuls
 How does it (currently) work?
 - **run_vuls.sh** daily via cronjob
 
-<code>
+```
 #run vuls daily mo-fr, generate python scripts, nagios will do a daily json parse
 15 07 * * 1-5 /var/vuls/run_vuls.sh
 
 #weekly mail for checking if vuls is working
 45 07 * * 2 /var/vuls/weekly_vuls_mail.sh
-</code>
+```
 
 - run an icinga job for a daily check of **check_vuls.py**
 - get notified via icingaweb2 / icinga alert if host need updates
 
-<code>
+```
 ################################################
 ## Vulnerability check ON icinga2             ##
 ################################################
@@ -35,7 +35,7 @@ apply Service "check_vulnerability_hosts" {
 
         assign where host.name == "icingahostname"
 }
-</code>
+```
 
 ### todo
 - add nagios config to github
@@ -59,8 +59,7 @@ apply Service "check_vulnerability_hosts" {
 ### howto
 
 ### icinga
-<code>
-
+```
 template Host "ubuntu1604"
 	...
 	settings...
@@ -76,4 +75,4 @@ apply Service "users" {
         assign where "ubuntu1604" in host.templates
         ignore where !host.address
 }
-</code>
+```
