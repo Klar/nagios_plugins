@@ -2,8 +2,9 @@
 import commands
 import sys
 import traceback
-from netaddr import IPNetwork, IPAddress, IPRange, IPSet
+from netaddr import IPAddress, IPSet
 from datetime import datetime, time
+import re
 
 # Settings
 filepath = "/home/nagios/libexec/"
@@ -26,59 +27,100 @@ startHour = None
 endHour = None
 unusal_login_time = 0
 
-whitelist_user = None
+whitelist_user = []
 whitelist_usercount = 0
 
-blacklist_user = None
+blacklist_user = []
 blacklist_usercount = 0
 
-whitelist_ips = None
+whitelist_ips = []
 whitelist_ipcount = 0
 
-blacklist_ips = None
+blacklist_ips = []
 blacklist_ipcount = 0
+
+logged_inas_root_count = 0
+logged_inas_other_count = 0
+logged_inas_tty_count = 0
 
 crit = 3
 warn = 2
 
-
-def get_osinfo():
+def create_userdic():
+    """ creates a userdict from 'who' information, loops them over netstat (ips) and returns them all in a dict"""
     usernames = None
+    users = dict()
     usercount = 0
-    user_netstat_dic = {}
-    usernames_unique = None
+    user_netstat_dic = dict()
+    usernames_unique = []
     netstat_ips = None
 
     usercount = commands.getoutput("who|wc -l").strip()
     usercount = int(usercount)
 
-    if usercount > 0:
-        usernames = commands.getoutput("who|grep -v \"^ *$\"|awk '{print $1}'|sort").strip().split("\n")
-        usernames_unique = list(set(usernames))
-    
+    if usercount:
+        usernames = commands.getoutput("who|grep -v \"^ *$\"|awk '{print $1,$2,$3,$4}'|sort").strip().split("\n")
+        for userwho in usernames:
+            username, con_type, login_date, login_time = userwho.split(' ')
+
+            login_datetime = "%(login_date)s %(login_time)s" % locals()
+
+            if username not in users.keys():
+                users[username] = dict(
+                        con_types=[],
+                        login_datetime=[],
+                        netstat_line=[],
+                        netstat_ips=[]
+                )
+            users[username]['con_types'].append(con_type)
+            
+            users[username]['login_datetime'].append(login_datetime)
+
         netstat_ips = []
-        for username in usernames_unique:
-            user_netstat = []
-
-            netstats = commands.getoutput('sudo netstat -npW 2>/dev/null| grep :22 | grep %s' % username).split('\n')
-
+        for username in users.keys():
+            netstats = commands.getoutput('sudo netstat -npW 2>/dev/null| grep :22 | grep %(username)s' % locals()).split('\n')
             for netstat in netstats:
-                ip_addr = netstat.strip().split()
-                ip_addr = ip_addr[4].rsplit(':', 1)[0]
+                if len(netstat) > 0:
+                    ip_addr = netstat.strip().split()[4].rsplit(':', 1)[0]
+                    users[username]['netstat_line'].append(netstat)
+                    users[username]['netstat_ips'].append((ip_addr))
 
-                user_netstat.append(netstat)
-                netstat_ips.append((ip_addr))
-
-
-            user_netstat_dic[username] = user_netstat
-
-    return int(usercount), usernames, user_netstat_dic, usernames_unique, netstat_ips
+    return users, usercount
 
 def isNowInTimePeriod(startHour, endHour, nowHour):
+    """ input startHour + endHour and you will see if you are currently in between """
     if startHour < endHour:
         return nowHour >= startHour and nowHour <= endHour
     else: #Over midnight
         return nowHour >= startHour or nowHour <= endHour
+
+def isrootloggedin():
+    """check if a user 'updated' his rights to another user or even root, dict with username and tty"""
+    logged_inas = list()
+    su_auxs = commands.getoutput('ps aux | grep -w "[s]u"').split('\n')
+    if len(su_auxs) > 1:
+        tmp_tty = list()
+        for su_aux in su_auxs:
+            logged_userlist = list()
+
+            su_aux = re.sub('\ +', ' ', su_aux)
+            su_aux = su_aux.strip().split(' ')
+
+            if "sudo" not in su_aux and su_aux[6] in tmp_tty:
+                continue
+
+            if len(su_aux) == 13: #su to another user
+                logged_userlist.append(su_aux[12]) #username
+                logged_userlist.append(su_aux[6]) #tty
+            else: #root logged in
+                logged_userlist.append(su_aux[0]) #username
+                logged_userlist.append(su_aux[6]) #tty
+
+            tmp_tty.append(su_aux[6])
+            
+            logged_inas.append(logged_userlist)
+
+    return logged_inas
 
 # argument management
 if len(sys.argv) <= 1:
@@ -105,86 +147,113 @@ else:
             crit = int(sys.argv[argvs_c])
 
 try:
-    usercount, usernames, user_netstat_dic, usernames_unique, netstat_ips = get_osinfo()
+    users, usercount = create_userdic()
 
-    if usercount > 0:
-        netstat_ips = list(set(netstat_ips))  # remove duplicate ips
+    if len(users) > 0:
+        timeperiod_output = ""
+
+        usernames_count = {user: len(users[user]['login_datetime']) for user in users.keys()}
+        print "[users: %(usernames_count)s]\n" % locals()
     
         # day // night warning
-        if startHour and endHour != None:
+        if startHour and endHour:
             nowHour = datetime.now().hour
+            now_Day = datetime.now().weekday()
 
             timeperiod = isNowInTimePeriod(startHour, endHour, nowHour)
 
-            if timeperiod == True:
-                output += "  * Unusual Login Time: %i:00 till %i:00 is blacklisted\n" % (startHour, endHour)
-                crit = True
+            if timeperiod or now_Day == 5 or now_Day == 6:
+                timeperiod_output = "  * Unusual Login Time: %(startHour)i:00 till %(endHour)i:00 and Saturday // Sunday is blacklisted\n" % locals()
+                print timeperiod_output
+                critical = True
                 unusal_login_time += 1
+        
+        # get root ttys
+        root_ttys = isrootloggedin()
 
-        # blacklisted IP
-        blacklist_ip_set = IPSet()
-        if blacklist_ips is not None:
-            for netstat_ip in netstat_ips:
-                for blacklist_ip in blacklist_ips:
-                    blacklist_ip_set.add(blacklist_ip)
-                
-                if IPAddress(netstat_ip) in blacklist_ip_set:
-                        output += "  * IP %s is blacklisted!\n" % netstat_ip
-                        warn = True
-                        blacklist_ipcount += 1
+        for username in users.keys():
+            logintime_output = ""
+            netstat_output = ""
+            blacklist_ip_output = ""
+            whitelist_ip_output = ""
+            blacklist_user_output = ""
+            whitelist_user_output = ""
+            logged_inas = ""
+            logged_inas_tty = ""
 
-        # whitelist IP
-        whitelist_ip_set = IPSet()
-        if whitelist_ips is not None:
-            for netstat_ip in netstat_ips:
+            for netstat_ip in users[username]["netstat_ips"]:
+                if netstat_ip in blacklist_ips:
+                    critical = True
+                    blacklist_ip_output = "  * IP %(netstat_ip)s is blacklisted!\n" % locals()
+                    blacklist_ipcount += 1
 
-                for whitelist_ip in whitelist_ips:
-                    whitelist_ip_set.add(whitelist_ip)
-                
-                if IPAddress(netstat_ip) not in whitelist_ip_set:
-                        output += "  * IP is not whitelisted! %s\n" % netstat_ip
-                        warn = True
+                if whitelist_ips:
+                    whitelist_ip_set = IPSet()
+                    for whitelist_ip in whitelist_ips:
+                        whitelist_ip_set.add(whitelist_ip)
+                    
+                    if IPAddress(netstat_ip) not in whitelist_ip_set:
+                    # if netstat_ip not in whitelist_ips:
+                        critical = True
+                        whitelist_ip_output = "  * IP %(netstat_ip)s is not whitelisted!\n" % locals()
                         whitelist_ipcount += 1
 
-        # blacklisted user
-        if blacklist_user is not None:
-            for user in blacklist_user:
-                if user in usernames_unique:
-                    output += "  * USER %s is blacklisted!\n" % user
-                    warn = True
-                    blacklist_usercount += 1
-                
-        # whitelisted user
-        if whitelist_user is not None:
-            for user in usernames_unique:
-                if user not in whitelist_user:
-                    output += "  * USER is not whitelisted! %s\n" % user
-                    warn = True
+            if username in blacklist_user:
+                blacklist_user_output = "  * USER %(username)s is blacklisted!\n" % locals()
+                critical = True
+                blacklist_usercount += 1
+
+            if whitelist_user:
+                if username not in whitelist_user:
+                    whitelist_user_output = "  * user %(username)s is not whitelisted!\n" % locals()
+                    critical = True
                     whitelist_usercount += 1
-            
-        usernames_count = {i: usernames.count(i) for i in usernames}
 
-        output += "\n[users: %(usernames_count)s]\n" % locals()
-
-        for user in usernames_unique:
-            output += "\n== %s ==" % user
-            user_logintime = commands.getoutput('who | grep %s | awk \'{print $3 " "$4}\'' % user).strip().split("\n")
-            output += "\n  login time:"
-            for logintime in user_logintime:
-                output += "\n     * " + logintime
+            logintime_output += str(users[username]["login_datetime"])
             
-            output += "\n  netstat output:"
-            for netstat in user_netstat_dic[user]:
-                if len(netstat):
-                    output += "\n     * " + netstat
+            # logged in as root
+            for user_tty in root_ttys:
+                tty_username = user_tty[0]
+                logged_tty = user_tty[1]
+
+                if logged_tty in users[username]["con_types"]:
+                    logged_inas += "  * %(username)s logged in as %(tty_username)s!\n" % locals()
+                    if tty_username == "root":
+                        logged_inas_root_count += 1
+                        critical = True
+                    else:
+                        logged_inas_other_count += 1
+                        warning = True
+
+            # logged in from (tty) esx
+            if any("tty" in con_type for con_type in users[username]["con_types"]):
+                logged_inas_tty = "  * %(username)s logged in from esx like tty!\n" % locals()
+                logged_inas_tty_count += 1
+                warning = True
+
+            for netstat_line in users[username]['netstat_line']:
+                netstat_output += "  * %(netstat_line)s\n" % locals()
+
+            con_types = users[username]['con_types']
+            print "user: %(username)s%(con_types)s\nlogintime: %(logintime_output)s\n%(netstat_output)s" % locals()
+            print "%(logged_inas_tty)s%(logged_inas)s%(blacklist_user_output)s%(whitelist_user_output)s%(blacklist_ip_output)s%(whitelist_ip_output)s" % locals()
+
+        # user logged in
+        if usercount >= warn:
+            warning = True
+        if usercount >= crit:
+            critical = True
 
     blacklist_ipcount = whitelist_ipcount + blacklist_ipcount
     blacklist_usercount = whitelist_usercount + blacklist_usercount
 
-    perfdata += "unusal_login_time=%d " % unusal_login_time
-    perfdata += "blacklisted_ip=%d " % blacklist_ipcount
-    perfdata += "blacklisted_user=%d " % blacklist_usercount
-    perfdata += "user=%(usercount)s" % locals()
+    perfdata += "unusal_login_time=%(unusal_login_time)d" % locals()
+    perfdata += " blacklisted_ip=%(blacklist_ipcount)d" % locals()
+    perfdata += " blacklisted_user=%(blacklist_usercount)d" % locals()
+    perfdata += " user=%(usercount)d" % locals()
+    perfdata += " logged_inas_root=%(logged_inas_root_count)d" % locals()
+    perfdata += " logged_inas_other=%(logged_inas_other_count)d" % locals()
+    perfdata += " logged_inas_tty=%(logged_inas_tty_count)d" % locals()
 
 except:
     unknown = True
@@ -193,12 +262,12 @@ except:
 if unknown:
     print "UKNOWN - output: %(output)s\nplease check script | %(perfdata)s" % locals()
     sys.exit(3)
-elif usercount >= crit:
-    print "CRITICAL\n%(output)s | %(perfdata)s" % locals()
+elif critical:
+    print "| %(perfdata)s" % locals()
     sys.exit(2)
-elif usercount >= warn:
-    print "WARNING\n%(output)s | %(perfdata)s" % locals()
+elif warning:
+    print "| %(perfdata)s" % locals()
     sys.exit(1)
 else:
-    print "OK %(output)s | %(perfdata)s" % locals()
+    print "| %(perfdata)s" % locals()
     sys.exit(0)
