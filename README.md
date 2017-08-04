@@ -2,6 +2,7 @@
 
 * [check_vuls.py](#check_vulspy)
 * [show_users.py](#show_userspy)
+* [ldap_lockedaccount.py](#ldap_lockedaccountpy)
 
 ## check_vuls.py 
 
@@ -40,10 +41,6 @@ apply Service "check_vulnerability_hosts" {
 }
 ```
 
-### todo
-- add nagios config to github
-- run vuls to scan more than once? otherwise we have to wait 24h to get the alert gone
-
 ## show_users.py 
 
  /home/nagios/libexec/show_users.py 
@@ -77,5 +74,28 @@ apply Service "users" {
 	vars.args = "-w 4 -c 6"
         assign where "ubuntu1604" in host.templates
         ignore where !host.address
+}
+```
+
+## ldap_lockedaccount.py
+
+ /home/nagios/libexec/ldap_lockedaccount.py 
+ ldap_lockedaccount.py -h <hostname-or-ip> -p <port> -w <warning> -c <critical> -b <dc=example,dc=me>
+
+* hostname == hostname of your openldap server
+* port == port of openldap server - default 389
+* warning == warning - best would be 1
+* criticial == critical - value depends but 2 or 3 should be good
+* b == your domain
+
+## icinga
+```
+apply Service "ldap-user-blocked" {
+        check_command = "check_by_ssh"
+        #vars.sla = ["empty"]
+        vars.group = host.vars.group
+        vars.scriptname = "ldap_lockedaccount.py"
+        vars.args = "-h 192.168.1.2 -p 389 -w 1 -c 2 -b dc=example,dc=me"
+        assign where host.name == "openldapserver.local"
 }
 ```
