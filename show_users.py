@@ -11,7 +11,6 @@ filepath = "/home/nagios/libexec/"
 tmppath = "%stmp/" % filepath
 file_name = sys.argv[0].replace(filepath, "")
 debug = False
-delimiter = ","
 
 helptext = "%s -w <warning> -c <critical> -wip <whitelist-ip> -bip <blacklist-ip> -wuser <whitelist-user> -buser <blacklist-user> -shour <start-hour> -ehour <end-hour>" % file_name
 
@@ -47,7 +46,7 @@ crit = 3
 warn = 2
 
 def create_userdic():
-    """ creates a userdict from 'who' information, loops them over netstat (ips) and returns them all in a dict"""
+    """ creates a userdict from 'who' information, loops them over lsof / netstat (ips) and returns them all in a dict"""
     usernames = None
     users = dict()
     usercount = 0
@@ -73,19 +72,24 @@ def create_userdic():
                         netstat_ips=[]
                 )
             users[username]['con_types'].append(con_type)
-            
+
             users[username]['login_datetime'].append(login_datetime)
 
         netstat_ips = []
+
+        netstats = commands.getoutput('netstat -npW 2>/dev/null| grep :22 ' % locals()).split('\n')
         for username in users.keys():
-            netstats = commands.getoutput('sudo netstat -npW 2>/dev/null| grep :22 | grep %(username)s' % locals()).split('\n')
-            for netstat in netstats:
+            
+            user_netstat = [k for k in netstats if username in k]
+            
+            for netstat in user_netstat:
                 if len(netstat) > 0:
                     ip_addr = netstat.strip().split()[4].rsplit(':', 1)[0]
                     users[username]['netstat_line'].append(netstat)
                     users[username]['netstat_ips'].append((ip_addr))
 
     return users, usercount
+
 
 def isNowInTimePeriod(startHour, endHour, nowHour):
     """ input startHour + endHour and you will see if you are currently in between """
@@ -152,9 +156,12 @@ try:
     if len(users) > 0:
         timeperiod_output = ""
 
-        usernames_count = {user: len(users[user]['login_datetime']) for user in users.keys()}
+        usernames_count = {}
+        for user in users.keys():
+            usernames_count[user] = len(users[user]['login_datetime'])
         print "[users: %(usernames_count)s]\n" % locals()
-    
+
+
         # day // night warning
         if startHour and endHour:
             nowHour = datetime.now().hour
